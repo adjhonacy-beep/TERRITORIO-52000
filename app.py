@@ -7,12 +7,12 @@ import streamlit as st
 from rapidfuzz import fuzz, process
 
 # ------------------------------------------------------------
-# ASISTENTE TERRITORIAL DE PASTO - JC
+# ASISTENTE - JC
 # Consulta basada en coincidencias con el Excel; no inventa datos.
 # ------------------------------------------------------------
 
 st.set_page_config(
-    page_title="Asistente Territorial JC",
+    page_title="Asistente JC",
     page_icon="🗺️",
     layout="wide",
     initial_sidebar_state="collapsed",
