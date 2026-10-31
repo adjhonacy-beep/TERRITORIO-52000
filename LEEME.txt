@@ -1,0 +1,38 @@
+ASISTENTE TERRITORIAL DE PASTO - JC
+
+CONTENIDO
+- app.py: aplicación web actualizada.
+- Pasto.xlsx: base territorial entregada.
+- requirements.txt: librerías necesarias.
+
+DISEÑO Y FUNCIONAMIENTO
+- Buscador ubicado en la parte superior.
+- Logotipo JC en la parte superior derecha.
+- Búsqueda por coincidencia de nombres, sin distinguir mayúsculas ni tildes.
+- Resultado ordenado: ZONA, COMUNA, BARRIO, CORREGIMIENTO, VEREDA y SECTOR.
+- Después muestra EDIFICIO, DIRECCION, LOCAL y TELEFONO cuando existan.
+- Oculta campos vacíos y no inventa información.
+- Permite cargar un Excel actualizado desde la página.
+
+IMPORTANTE SOBRE EL EXCEL ACTUAL
+El archivo Pasto.xlsx contiene 564 registros y las columnas territoriales ZONA, COMUNA, BARRIO, CORREGIMIENTO, VEREDA y SECTOR. Las columnas complementarias EDIFICIO, DIRECCION, LOCAL y TELEFONO no están diligenciadas ni aparecen con esos encabezados en la base actual.
+Para que la aplicación las muestre, agrega esas columnas al Excel y completa los datos correspondientes. La aplicación las detectará automáticamente.
+
+PUBLICAR EN STREAMLIT COMMUNITY CLOUD
+El proyecto se conserva con el repositorio GitHub:
+asistente-territorial-pasto
+Rama: main
+Archivo principal: app.py
+
+1. En GitHub abre el repositorio asistente-territorial-pasto.
+2. Reemplaza app.py por el nuevo app.py de esta carpeta.
+3. Sube también requirements.txt actualizado.
+4. Asegúrate de que Pasto.xlsx esté en la raíz del repositorio, junto a app.py.
+5. En Streamlit Community Cloud abre la aplicación y selecciona Reboot app / Reiniciar aplicación si no se actualiza automáticamente.
+
+Si se crea una aplicación nueva:
+- Main file path: app.py
+- Deploy desde la rama main.
+
+NOTA DE PRECISIÓN
+Esta aplicación realiza búsquedas sobre los registros del Excel. Para relacionar direcciones postales con barrio o comuna cuando no exista esa relación en la tabla, se requiere una base de direcciones validada o cartografía. No se deduce una ubicación solo por aproximación.
