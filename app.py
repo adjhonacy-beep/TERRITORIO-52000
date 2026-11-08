@@ -238,7 +238,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-#uploaded = none
+uploaded = None
 try:
     df, source_name, column_map = load_excel(uploaded)
 except Exception as exc:
