@@ -238,7 +238,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-uploaded = st.file_uploader("Cargar o actualizar base de datos Excel (.xlsx)", type=["xlsx"], label_visibility="collapsed")
+#uploaded = none
 try:
     df, source_name, column_map = load_excel(uploaded)
 except Exception as exc:
