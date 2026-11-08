@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+st.markdown("""<style>.block-container{padding-top: 4rem !important;}</style>""",unsafe_allow_html=True)
 from rapidfuzz import fuzz, process
 
 # ------------------------------------------------------------
