@@ -108,50 +108,168 @@ def unique_nonempty(values):
     return sorted(found.values(), key=normalize)
 
 def search_records(question, data):
-    q = normalize(question)
+        q = normalize(question)
+
     if not q:
         return data.iloc[0:0], "", 0
 
-    # Busca coincidencia por nombre en todos los campos disponibles.
-    candidates = []
-    for field in data.columns:
+    # Comparación flexible de nombres
+    def match_score(query, value):
+        nq = normalize(query)
+        nv = normalize(value)
+
+        if not nq or not nv:
+            return 0
+
+        # También permite buscar "5" y encontrar "Comuna 5"
+        nq_alt = re.sub(r"^(comuna|comunas)\s*", "", nq).strip()
+        nv_alt = re.sub(r"^(comuna|comunas)\s*", "", nv).strip()
+
+        if nq in (nv, nv_alt) or nv in (nq, nq_alt):
+            return 100
+
+        if nq in nv or nv in nq:
+            return 95
+
+        if nq_alt and nq_alt in nv_alt:
+            return 95
+
+        return max(fuzz.ratio(nq, nv),fuzz.ratio(nq_alt, nv_alt) if nq_alt else 0)
+
+    # Busca TODOS los valores coincidentes de una columna
+    def find_matches(field, query, threshold=76):
+        if field not in data.columns:
+            return []
+
+        matches = []
+
         for value in unique_nonempty(data[field].tolist()):
-            nv = normalize(value)
-            if not nv:
-                continue
-            if nv == q:
-                score = 100
-            elif nv in q:
-                score = min(99, 92 + len(nv) / max(len(q), 1) * 7)
-            elif q in nv and len(q) >= 3:
-                score = 88
-            else:
-                score = fuzz.ratio(q, nv)
-            if score >= 76:
-                candidates.append((score, field, value, nv))
+            score = match_score(query, value)
 
-    if not candidates:
-        # Si la consulta incluye una frase, intenta comparar sus palabras principales.
-        tokens = [t for t in q.split() if len(t) >= 3]
-        if tokens:
-            for field in data.columns:
-                for value in unique_nonempty(data[field].tolist()):
-                    nv = normalize(value)
-                    if nv and any(t in nv for t in tokens):
-                        candidates.append((78, field, value, nv))
+            if score >= threshold:
+                matches.append((value, score))
 
-    if not candidates:
+        return matches
+
+    # Devuelve todos los registros relacionados con los valores encontrados
+    def get_related(field, matches):
+        if field not in data.columns or not matches:
+            return data.iloc[0:0]
+
+        normalized_values = {normalize(value) for value, score in matches}
+
+        return data[data[field].map(normalize).isin(normalized_values)].drop_duplicates().reset_index(drop=True)
+
+    # --------------------------------------------------
+    # 1. ZONA RURAL: TODOS LOS CORREGIMIENTOS
+    # --------------------------------------------------
+    if q in {"rural", "zona rural"}:
+        matches = unique_nonempty(data["CORREGIMIENTO"].tolist()) if "CORREGIMIENTO" in data.columns else []
+
+        if not matches:
+            return data.iloc[0:0], "", 0
+
+        result = pd.DataFrame({"CORREGIMIENTO": matches})
+
+        return result, "Todos los corregimientos de Pasto", 100
+
+    # --------------------------------------------------
+    # 2. ZONA URBANA: TODAS LAS COMUNAS
+    # --------------------------------------------------
+    if q in {"urbana", "urbano", "zona urbana"}:
+        matches = unique_nonempty(data["COMUNA"].tolist()) if "COMUNA" in data.columns else []
+
+        if not matches:
+            return data.iloc[0:0], "", 0
+
+        result = pd.DataFrame({"COMUNA": matches})
+
+        return result, "Todas las comunas de Pasto", 100
+
+    # --------------------------------------------------
+    # 3. BÚSQUEDA POR COMUNA: MOSTRAR TODOS SUS BARRIOS
+    # --------------------------------------------------
+    comuna_matches = find_matches("COMUNA", q)
+
+    if comuna_matches:
+        rows = get_related("COMUNA", comuna_matches)
+
+        nombres = ", ".join(value for value, score in comuna_matches)
+
+        return rows, nombres, max(score for value, score in comuna_matches)
+
+    # --------------------------------------------------
+    # 4. BÚSQUEDA POR CORREGIMIENTO:
+    # MOSTRAR VEREDAS Y SECTORES
+    # --------------------------------------------------
+    corregimiento_matches = find_matches("CORREGIMIENTO", q)
+
+    if corregimiento_matches:
+        rows = get_related("CORREGIMIENTO", corregimiento_matches)
+
+        nombres = ", ".join(value for value, score in corregimiento_matches)
+
+        return rows, nombres, max(score for value, score in corregimiento_matches)
+
+    # --------------------------------------------------
+    # 5. BÚSQUEDA POR BARRIO:
+    # MOSTRAR TODOS LOS EDIFICIOS ASOCIADOS
+    # --------------------------------------------------
+    barrio_matches = find_matches("BARRIO", q)
+
+    if barrio_matches:
+        rows = get_related("BARRIO", barrio_matches)
+
+        nombres = ", ".join(value for value, score in barrio_matches)
+
+        return rows, nombres, max(score for value, score in barrio_matches)
+
+    # --------------------------------------------------
+    # 6. BÚSQUEDA GENERAL:
+    # MOSTRAR TODAS LAS COINCIDENCIAS
+    # --------------------------------------------------
+    all_matches = []
+
+    for field in data.columns:
+        matches = find_matches(field, q)
+
+        for value, score in matches:
+            all_matches.append((field, value, score))
+
+    if not all_matches:
+        # Búsqueda por palabras individuales
+        tokens = [token for token in q.split() if len(token) >= 3]
+
+        for field in data.columns:
+            for value in unique_nonempty(data[field].tolist()):
+                nv = normalize(value)
+
+                if nv and any(token in nv for token in tokens):
+                    all_matches.append((field, value, 78))
+
+    if not all_matches:
         return data.iloc[0:0], "", 0
 
-    candidates.sort(key=lambda x: (x[0], len(x[3])), reverse=True)
-    best_score, best_field, best_value, best_norm = candidates[0]
+    # Unir registros coincidentes de todos los campos
+    result_frames = []
 
-    # Coincidencia con el valor más relevante; evita mezclar registros de nombres distintos.
-    mask = data[best_field].map(normalize) == best_norm
-    rows = data.loc[mask].copy()
+    for field, value, score in all_matches:
+        matched_rows = data[data[field].map(normalize) == normalize(value)]
 
-    # Si la búsqueda es una comuna y hay varias filas, se presentan sus registros asociados.
-    return rows.drop_duplicates().reset_index(drop=True), best_value, int(best_score)
+        result_frames.append(matched_rows)
+
+    rows = pd.concat(result_frames, ignore_index=True).drop_duplicates().reset_index(drop=True)
+
+    names = unique_nonempty([value for field, value, score in all_matches])
+
+    matched_name = ", ".join(names[:10])
+
+    if len(names) > 10:
+        matched_name += f" y {len(names) - 10} más"
+
+    best_score = max(score for field, value, score in all_matches)
+
+    return rows, matched_name, int(best_score)
 
 def display_fields(row):
     order = [f for f in PRIMARY_FIELDS + EXTRA_FIELDS if f in row.index]
