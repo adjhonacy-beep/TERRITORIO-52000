@@ -4,8 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-st.markdown("""<style>.block-container{padding-top: 4rem !important;}</style>""",unsafe_allow_html=True)
-from rapidfuzz import fuzz, process
+from rapidfuzz import fuzz
 
 # ------------------------------------------------------------
 # ASISTENTE - JC
@@ -108,7 +107,7 @@ def unique_nonempty(values):
     return sorted(found.values(), key=normalize)
 
 def search_records(question, data):
-        q = normalize(question)
+    q = normalize(question)
 
     if not q:
         return data.iloc[0:0], "", 0
@@ -134,7 +133,7 @@ def search_records(question, data):
         if nq_alt and nq_alt in nv_alt:
             return 95
 
-        return max(fuzz.ratio(nq, nv),fuzz.ratio(nq_alt, nv_alt) if nq_alt else 0)
+        return max(fuzz.ratio(nq, nv), fuzz.ratio(nq_alt, nv_alt) if nq_alt else 0)
 
     # Busca TODOS los valores coincidentes de una columna
     def find_matches(field, query, threshold=76):
@@ -142,13 +141,10 @@ def search_records(question, data):
             return []
 
         matches = []
-
         for value in unique_nonempty(data[field].tolist()):
             score = match_score(query, value)
-
             if score >= threshold:
                 matches.append((value, score))
-
         return matches
 
     # Devuelve todos los registros relacionados con los valores encontrados
@@ -157,7 +153,6 @@ def search_records(question, data):
             return data.iloc[0:0]
 
         normalized_values = {normalize(value) for value, score in matches}
-
         return data[data[field].map(normalize).isin(normalized_values)].drop_duplicates().reset_index(drop=True)
 
     # --------------------------------------------------
@@ -170,7 +165,6 @@ def search_records(question, data):
             return data.iloc[0:0], "", 0
 
         result = pd.DataFrame({"CORREGIMIENTO": matches})
-
         return result, "Todos los corregimientos de Pasto", 100
 
     # --------------------------------------------------
@@ -183,92 +177,68 @@ def search_records(question, data):
             return data.iloc[0:0], "", 0
 
         result = pd.DataFrame({"COMUNA": matches})
-
         return result, "Todas las comunas de Pasto", 100
 
     # --------------------------------------------------
     # 3. BÚSQUEDA POR COMUNA: MOSTRAR TODOS SUS BARRIOS
     # --------------------------------------------------
     comuna_matches = find_matches("COMUNA", q)
-
     if comuna_matches:
         rows = get_related("COMUNA", comuna_matches)
-
         nombres = ", ".join(value for value, score in comuna_matches)
-
         return rows, nombres, max(score for value, score in comuna_matches)
 
     # --------------------------------------------------
-    # 4. BÚSQUEDA POR CORREGIMIENTO:
-    # MOSTRAR VEREDAS Y SECTORES
+    # 4. BÚSQUEDA POR CORREGIMIENTO
     # --------------------------------------------------
     corregimiento_matches = find_matches("CORREGIMIENTO", q)
-
     if corregimiento_matches:
         rows = get_related("CORREGIMIENTO", corregimiento_matches)
-
         nombres = ", ".join(value for value, score in corregimiento_matches)
-
         return rows, nombres, max(score for value, score in corregimiento_matches)
 
     # --------------------------------------------------
-    # 5. BÚSQUEDA POR BARRIO:
-    # MOSTRAR TODOS LOS EDIFICIOS ASOCIADOS
+    # 5. BÚSQUEDA POR BARRIO
     # --------------------------------------------------
     barrio_matches = find_matches("BARRIO", q)
-
     if barrio_matches:
         rows = get_related("BARRIO", barrio_matches)
-
         nombres = ", ".join(value for value, score in barrio_matches)
-
         return rows, nombres, max(score for value, score in barrio_matches)
 
     # --------------------------------------------------
-    # 6. BÚSQUEDA GENERAL:
-    # MOSTRAR TODAS LAS COINCIDENCIAS
+    # 6. BÚSQUEDA GENERAL
     # --------------------------------------------------
     all_matches = []
-
     for field in data.columns:
         matches = find_matches(field, q)
-
         for value, score in matches:
             all_matches.append((field, value, score))
 
     if not all_matches:
-        # Búsqueda por palabras individuales
         tokens = [token for token in q.split() if len(token) >= 3]
-
         for field in data.columns:
             for value in unique_nonempty(data[field].tolist()):
                 nv = normalize(value)
-
                 if nv and any(token in nv for token in tokens):
                     all_matches.append((field, value, 78))
 
     if not all_matches:
         return data.iloc[0:0], "", 0
 
-    # Unir registros coincidentes de todos los campos
     result_frames = []
-
     for field, value, score in all_matches:
         matched_rows = data[data[field].map(normalize) == normalize(value)]
-
         result_frames.append(matched_rows)
 
     rows = pd.concat(result_frames, ignore_index=True).drop_duplicates().reset_index(drop=True)
-
     names = unique_nonempty([value for field, value, score in all_matches])
-
     matched_name = ", ".join(names[:10])
 
     if len(names) > 10:
         matched_name += f" y {len(names) - 10} más"
 
     best_score = max(score for field, value, score in all_matches)
-
     return rows, matched_name, int(best_score)
 
 def display_fields(row):
@@ -284,8 +254,6 @@ def render_result(rows, matched_name, score):
     if len(rows) > 1:
         st.caption(f"{len(rows)} registros relacionados encontrados en el archivo. Los valores repetidos se agrupan.")
 
-    # Agrupa valores únicos por campo para evitar decenas de tarjetas repetidas
-    # al consultar una comuna o un corregimiento.
     grouped = {}
     for field in PRIMARY_FIELDS + EXTRA_FIELDS:
         if field in rows.columns:
@@ -318,11 +286,11 @@ def render_result(rows, matched_name, score):
                 )
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Estilo visual: buscador superior y marca JC a la derecha.
+# Estilo visual general
 st.markdown("""
 <style>
 #MainMenu, footer {visibility:hidden;}
-.block-container {padding-top:1.5rem; max-width:1180px;}
+.block-container {padding-top:1.5rem !important; max-width:1180px;}
 .topline {display:flex; align-items:center; justify-content:space-between; gap:18px;
           border-bottom:1px solid #e7eaf0; padding-bottom:16px; margin-bottom:18px;}
 .brand-title {font-size:27px; font-weight:800; color:#17365d; line-height:1.15;}
