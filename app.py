@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-st.markdown("""<style>.block-container{padding-top: 4rem !important;}</style>""",unsafe_allow_html=True)
 from rapidfuzz import fuzz, process
 
 # ------------------------------------------------------------
@@ -17,6 +16,15 @@ st.set_page_config(
     page_icon="🗺️",
     layout="wide",
     initial_sidebar_state="collapsed",
+)
+
+st.markdown(
+    """<style>
+    .block-container {
+        padding-top: 1.5rem !important;
+    }
+    </style>""",
+    unsafe_allow_html=True
 )
 
 PRIMARY_FIELDS = ["ZONA", "COMUNA", "BARRIO", "CORREGIMIENTO", "VEREDA", "SECTOR"]
