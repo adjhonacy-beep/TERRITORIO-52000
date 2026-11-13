@@ -737,7 +737,12 @@ with st.expander("Estado y cobertura de la base"):
     available_extra = [
         field for field in EXTRA_FIELDS if field in df.columns
     ]
+from pathlib import Path
 
+# 1. Define correctamente tu ruta y el código completo dentro de la variable 'code'
+path = Path("mi_aplicacion.py")  # O la ruta que estés utilizando
+
+code = """
     st.write(
         "**Campos territoriales:** "
         + (
@@ -768,11 +773,12 @@ with st.expander("Estado y cobertura de la base"):
         "La aplicación muestra únicamente datos existentes en el Excel. "
         "No completa ni inventa información."
     )
-'''
+"""
 
-
-# Comprobación sintáctica antes de entregar el archivo.
-compile(code, str(path), "exec")
-
-print(f"Archivo creado y comprobado: {path}")
-print(f"Líneas de código: {len(code.splitlines())}")
+# 2. Comprobación sintáctica antes de entregar o ejecutar el archivo
+try:
+    compile(code, str(path), "exec")
+    print(f"Archivo comprobado exitosamente: {path}")
+    print(f"Líneas de código: {len(code.splitlines())}")
+except SyntaxError as e:
+    print(f"Error de sintaxis encontrado: {e}")
