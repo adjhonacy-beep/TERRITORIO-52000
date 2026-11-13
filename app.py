@@ -770,8 +770,6 @@ with st.expander("Estado y cobertura de la base"):
     )
 '''
 
-path = Path("/mnt/data/app.py")
-path.write_text(code, encoding="utf-8")
 
 # Comprobación sintáctica antes de entregar el archivo.
 compile(code, str(path), "exec")
