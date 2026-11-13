@@ -108,7 +108,7 @@ def unique_nonempty(values):
     return sorted(found.values(), key=normalize)
 
 def search_records(question, data):
-        q = normalize(question)
+    q = normalize(question)
 
     if not q:
         return data.iloc[0:0], "", 0
