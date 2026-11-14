@@ -107,6 +107,26 @@ def search_records(question, data):
     if not q:
         return data.iloc[0:0], "", 0
 
+    # --------------------------------------------------
+    # 1. BÚSQUEDA RURAL / CORREGIMIENTOS
+    # --------------------------------------------------
+    if q in {"rural", "zona rural", "corregimientos", "corregimiento"}:
+        matches = unique_nonempty(data["CORREGIMIENTO"].tolist()) if "CORREGIMIENTO" in data.columns else []
+        if not matches:
+            return data.iloc[0:0], "", 0
+        result = pd.DataFrame({"CORREGIMIENTO": matches})
+        return result, "Todos los corregimientos de Pasto", 100
+
+    # --------------------------------------------------
+    # 2. BÚSQUEDA URBANA / COMUNAS
+    # --------------------------------------------------
+    if q in {"urbana", "urbano", "zona urbana", "comunas", "comuna"}:
+        matches = unique_nonempty(data["COMUNA"].tolist()) if "COMUNA" in data.columns else []
+        if not matches:
+            return data.iloc[0:0], "", 0
+        result = pd.DataFrame({"COMUNA": matches})
+        return result, "Todas las comunas de Pasto", 100
+
     def match_score(query, value):
         nq = normalize(query)
         nv = normalize(value)
@@ -141,20 +161,6 @@ def search_records(question, data):
             return data.iloc[0:0]
         normalized_values = {normalize(value) for value, score in matches}
         return data[data[field].map(normalize).isin(normalized_values)].drop_duplicates().reset_index(drop=True)
-
-    if q in {"rural", "zona rural"}:
-        matches = unique_nonempty(data["CORREGIMIENTO"].tolist()) if "CORREGIMIENTO" in data.columns else []
-        if not matches:
-            return data.iloc[0:0], "", 0
-        result = pd.DataFrame({"CORREGIMIENTO": matches})
-        return result, "Todos los corregimientos de Pasto", 100
-
-    if q in {"urbana", "urbano", "zona urbana"}:
-        matches = unique_nonempty(data["COMUNA"].tolist()) if "COMUNA" in data.columns else []
-        if not matches:
-            return data.iloc[0:0], "", 0
-        result = pd.DataFrame({"COMUNA": matches})
-        return result, "Todas las comunas de Pasto", 100
 
     comuna_matches = find_matches("COMUNA", q)
     if comuna_matches:
@@ -227,7 +233,7 @@ def render_result(rows, matched_name, score):
     extra = [(k, v) for k, v in grouped.items() if k in EXTRA_FIELDS]
     cols = st.columns(3)
     for i, (field, values) in enumerate(main):
-        value_html = "<br>".join(values) if len(values) <= 8 else "<br>".join(values[:8]) + f"<br><span class='note'>y {len(values)-8} más…</span>"
+        value_html = "<br>".join(values) if len(values) <= 15 else "<br>".join(values[:15]) + f"<br><span class='note'>y {len(values)-15} más…</span>"
         with cols[i % 3]:
             st.markdown(
                 f'<div class="field"><div class="field-label">{field.title()}</div>'
@@ -238,7 +244,7 @@ def render_result(rows, matched_name, score):
         st.markdown('<div class="extra-title">Información complementaria</div>', unsafe_allow_html=True)
         extra_cols = st.columns(2)
         for i, (field, values) in enumerate(extra):
-            value_html = "<br>".join(values) if len(values) <= 8 else "<br>".join(values[:8]) + f"<br><span class='note'>y {len(values)-8} más…</span>"
+            value_html = "<br>".join(values) if len(values) <= 15 else "<br>".join(values[:15]) + f"<br><span class='note'>y {len(values)-15} más…</span>"
             with extra_cols[i % 2]:
                 st.markdown(
                     f'<div class="field"><div class="field-label">{field.title()}</div>'
@@ -380,7 +386,7 @@ c1, c2 = st.columns([5, 1])
 with c1:
     query = st.text_input(
         "Buscar",
-        placeholder="Ejemplo: El Tejar, comuna 5, Catambuco...",
+        placeholder="Ejemplo: rural, comunas, El Tejar, comuna 5...",
         label_visibility="collapsed",
         key="territorial_query",
     )
@@ -399,3 +405,4 @@ if search_clicked or query:
             st.caption("Verifica la escritura o intenta con una parte más corta del nombre.")
     else:
         st.info("Escribe un nombre en el recuadro superior para iniciar la búsqueda.")
+    
