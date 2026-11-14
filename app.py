@@ -275,16 +275,6 @@ st.markdown("""
     color: #687386;
     font-weight: 500;
 }
-.search-container {
-    background: #ffffff;
-    border: 2px solid #111111;
-    border-radius: 12px;
-    padding: 4px 12px;
-    display: flex;
-    align-items: center;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-    margin-bottom: 6px;
-}
 .search-label {
     text-align: center;
     font-size: 15px;
@@ -385,7 +375,7 @@ if df is None:
     st.info("Para comenzar, coloca el archivo Pasto.xlsx junto a app.py o cárgalo aquí.")
     st.stop()
 
-# Campo de búsqueda y etiqueta ordenados como solicitaste
+# Campo de búsqueda y etiqueta ordenados
 c1, c2 = st.columns([5, 1])
 with c1:
     query = st.text_input(
@@ -409,17 +399,3 @@ if search_clicked or query:
             st.caption("Verifica la escritura o intenta con una parte más corta del nombre.")
     else:
         st.info("Escribe un nombre en el recuadro superior para iniciar la búsqueda.")
-
-with st.expander("Ejemplos de búsqueda"):
-    st.write("• El Tejar")
-    st.write("• Comuna 5")
-    st.write("• Catambuco")
-    st.write("• Nombre de una vereda o sector")
-
-with st.expander("Estado y cobertura de la base"):
-    st.write(f"**Archivo consultado:** {source_name}")
-    st.write(f"**Registros con información:** {len(df)}")
-    available_primary = [f for f in PRIMARY_FIELDS if f in df.columns]
-    available_extra = [f for f in EXTRA_FIELDS if f in df.columns]
-    st.write("**Campos territoriales:** " + (", ".join(available_primary) if available_primary else "No identificados"))
-    st.caption("La aplicación muestra únicamente datos existentes en el Excel. No completa ni inventa información.")
