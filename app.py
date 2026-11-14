@@ -107,9 +107,7 @@ def search_records(question, data):
     if not q:
         return data.iloc[0:0], "", 0
 
-    # --------------------------------------------------
-    # 1. BÚSQUEDA RURAL / CORREGIMIENTOS
-    # --------------------------------------------------
+    # 1. BÚSQUEDA RURAL / CORREGIMIENTOS GENERAL
     if q in {"rural", "zona rural", "corregimientos", "corregimiento"}:
         matches = unique_nonempty(data["CORREGIMIENTO"].tolist()) if "CORREGIMIENTO" in data.columns else []
         if not matches:
@@ -117,9 +115,7 @@ def search_records(question, data):
         result = pd.DataFrame({"CORREGIMIENTO": matches})
         return result, "Todos los corregimientos de Pasto", 100
 
-    # --------------------------------------------------
-    # 2. BÚSQUEDA URBANA / COMUNAS
-    # --------------------------------------------------
+    # 2. BÚSQUEDA URBANA / COMUNAS GENERAL
     if q in {"urbana", "urbano", "zona urbana", "comunas", "comuna"}:
         matches = unique_nonempty(data["COMUNA"].tolist()) if "COMUNA" in data.columns else []
         if not matches:
@@ -134,8 +130,8 @@ def search_records(question, data):
         if not nq or not nv:
             return 0
 
-        nq_alt = re.sub(r"^(comuna|comunas)\s*", "", nq).strip()
-        nv_alt = re.sub(r"^(comuna|comunas)\s*", "", nv).strip()
+        nq_alt = re.sub(r"^(comuna|comunas|corregimiento|corregimientos)\s*", "", nq).strip()
+        nv_alt = re.sub(r"^(comuna|comunas|corregimiento|corregimientos)\s*", "", nv).strip()
 
         if nq in (nv, nv_alt) or nv in (nq, nq_alt):
             return 100
@@ -162,17 +158,18 @@ def search_records(question, data):
         normalized_values = {normalize(value) for value, score in matches}
         return data[data[field].map(normalize).isin(normalized_values)].drop_duplicates().reset_index(drop=True)
 
-    comuna_matches = find_matches("COMUNA", q)
-    if comuna_matches:
-        rows = get_related("COMUNA", comuna_matches)
-        nombres = ", ".join(value for value, score in comuna_matches)
-        return rows, nombres, max(score for value, score in comuna_matches)
-
+    # 3. BÚSQUEDA ESPECÍFICA POR CORREGIMIENTO (Muestra veredas y sectores)
     corregimiento_matches = find_matches("CORREGIMIENTO", q)
     if corregimiento_matches:
         rows = get_related("CORREGIMIENTO", corregimiento_matches)
         nombres = ", ".join(value for value, score in corregimiento_matches)
         return rows, nombres, max(score for value, score in corregimiento_matches)
+
+    comuna_matches = find_matches("COMUNA", q)
+    if comuna_matches:
+        rows = get_related("COMUNA", comuna_matches)
+        nombres = ", ".join(value for value, score in comuna_matches)
+        return rows, nombres, max(score for value, score in comuna_matches)
 
     barrio_matches = find_matches("BARRIO", q)
     if barrio_matches:
@@ -212,12 +209,58 @@ def search_records(question, data):
     best_score = max(score for field, value, score in all_matches)
     return rows, matched_name, int(best_score)
 
-def render_result(rows, matched_name, score):
+def render_result(rows, matched_name, score, query_text=""):
     st.markdown(
         f'<div class="match-heading">Coincidencia encontrada: <b>{matched_name}</b>'
         f'<span class="match-score">{score}%</span></div>',
         unsafe_allow_html=True,
     )
+    
+    # Si la búsqueda fue un corregimiento específico y contiene columnas de vereda/sector, estructuramos el desglose
+    q_norm = normalize(query_text)
+    is_corregimiento_search = False
+    if "CORREGIMIENTO" in rows.columns:
+        unique_corregs = rows["CORREGIMIENTO"].apply(normalize).unique()
+        if len(unique_corregs) == 1 and any(match_score_check(q_norm, c) > 80 for c in rows["CORREGIMIENTO"].unique()):
+            is_corregimiento_search = True
+
+    # Comprobación auxiliar rápida local para renderizado
+    if not is_corregimiento_search and len(rows) > 0 and "CORREGIMIENTO" in rows.columns:
+        for val in rows["CORREGIMIENTO"].unique():
+            if normalize(val) in q_norm or q_norm in normalize(val):
+                is_corregimiento_search = True
+                break
+
+    if is_corregimiento_search and "VEREDA" in rows.columns:
+        st.markdown('<div class="result-card">', unsafe_allow_html=True)
+        st.markdown('<div class="extra-title" style="margin-top:0; border-top:none;">Desglose por Veredas y Sectores</div>', unsafe_allow_html=True)
+        
+        # Agrupar sectores por vereda
+        vereda_dict = {}
+        for _, r in rows.iterrows():
+            v = clean_cell(r.get("VEREDA", ""))
+            s = clean_cell(r.get("SECTOR", ""))
+            if v:
+                vereda_dict.setdefault(v, set())
+                if s:
+                    vereda_dict[v].add(s)
+        
+        if vereda_dict:
+            for vereda, sectores in sorted(vereda_dict.items()):
+                sectores_str = ", ".join(sorted(sectores)) if sectores else "Sin sector especificado"
+                st.markdown(
+                    f'<div class="field" style="min-height:auto; margin-bottom:6px;">'
+                    f'<div class="field-label">Vereda: {vereda}</div>'
+                    f'<div class="field-value" style="font-size:14px; font-weight:normal; margin-top:2px;"><b>Sectores:</b> {sectores_str}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("No se encontraron veredas registradas para este corregimiento.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+
+    # Renderizado estándar para otros casos
     if len(rows) > 1:
         st.caption(f"{len(rows)} registros relacionados encontrados en el archivo. Los valores repetidos se agrupan.")
 
@@ -252,6 +295,15 @@ def render_result(rows, matched_name, score):
                     unsafe_allow_html=True,
                 )
     st.markdown('</div>', unsafe_allow_html=True)
+
+def match_score_check(q, v):
+    nq = normalize(q)
+    nv = normalize(v)
+    if not nq or not nv:
+        return 0
+    if nq in nv or nv in nq:
+        return 95
+    return fuzz.ratio(nq, nv)
 
 # Estilo visual centrado y limpio
 st.markdown("""
@@ -386,7 +438,7 @@ c1, c2 = st.columns([5, 1])
 with c1:
     query = st.text_input(
         "Buscar",
-        placeholder="Ejemplo: rural, comunas, El Tejar, comuna 5...",
+        placeholder="Ejemplo: Catambuco, rural, comunas, El Tejar...",
         label_visibility="collapsed",
         key="territorial_query",
     )
@@ -399,10 +451,9 @@ if search_clicked or query:
     if query.strip():
         results, matched_name, score = search_records(query, df)
         if len(results):
-            render_result(results, matched_name, score)
+            render_result(results, matched_name, score, query_text=query)
         else:
             st.warning("No encontré una coincidencia suficientemente clara en el Excel.")
             st.caption("Verifica la escritura o intenta con una parte más corta del nombre.")
     else:
         st.info("Escribe un nombre en el recuadro superior para iniciar la búsqueda.")
-    
