@@ -12,7 +12,7 @@ from rapidfuzz import fuzz
 # ------------------------------------------------------------
 
 st.set_page_config(
-    page_title="Asistente JC",
+    page_title="Asistente Territorial",
     page_icon="🗺️",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -47,7 +47,6 @@ def clean_cell(value):
     value = str(value).strip()
     if value.lower() in {"nan", "none", "null"}:
         return ""
-    # Evita mostrar números telefónicos como 3001234567.0
     if re.fullmatch(r"\d+\.0", value):
         value = value[:-2]
     return value
@@ -88,7 +87,6 @@ def load_excel(uploaded_file=None):
     for field, original in mapping.items():
         data[field] = raw[original].map(clean_cell)
 
-    # Conserva únicamente campos con contenido y elimina filas totalmente vacías.
     available = [f for f in PRIMARY_FIELDS + EXTRA_FIELDS if f in data.columns]
     data = data[available]
     data = data.loc[~data.apply(lambda row: all(not str(v).strip() for v in row), axis=1)]
@@ -109,7 +107,6 @@ def search_records(question, data):
     if not q:
         return data.iloc[0:0], "", 0
 
-    # Comparación flexible de nombres
     def match_score(query, value):
         nq = normalize(query)
         nv = normalize(value)
@@ -117,26 +114,21 @@ def search_records(question, data):
         if not nq or not nv:
             return 0
 
-        # También permite buscar "5" y encontrar "Comuna 5"
         nq_alt = re.sub(r"^(comuna|comunas)\s*", "", nq).strip()
         nv_alt = re.sub(r"^(comuna|comunas)\s*", "", nv).strip()
 
         if nq in (nv, nv_alt) or nv in (nq, nq_alt):
             return 100
-
         if nq in nv or nv in nq:
             return 95
-
         if nq_alt and nq_alt in nv_alt:
             return 95
 
         return max(fuzz.ratio(nq, nv), fuzz.ratio(nq_alt, nv_alt) if nq_alt else 0)
 
-    # Busca TODOS los valores coincidentes de una columna
     def find_matches(field, query, threshold=76):
         if field not in data.columns:
             return []
-
         matches = []
         for value in unique_nonempty(data[field].tolist()):
             score = match_score(query, value)
@@ -144,68 +136,44 @@ def search_records(question, data):
                 matches.append((value, score))
         return matches
 
-    # Devuelve todos los registros relacionados con los valores encontrados
     def get_related(field, matches):
         if field not in data.columns or not matches:
             return data.iloc[0:0]
-
         normalized_values = {normalize(value) for value, score in matches}
         return data[data[field].map(normalize).isin(normalized_values)].drop_duplicates().reset_index(drop=True)
 
-    # --------------------------------------------------
-    # 1. ZONA RURAL: TODOS LOS CORREGIMIENTOS
-    # --------------------------------------------------
     if q in {"rural", "zona rural"}:
         matches = unique_nonempty(data["CORREGIMIENTO"].tolist()) if "CORREGIMIENTO" in data.columns else []
-
         if not matches:
             return data.iloc[0:0], "", 0
-
         result = pd.DataFrame({"CORREGIMIENTO": matches})
         return result, "Todos los corregimientos de Pasto", 100
 
-    # --------------------------------------------------
-    # 2. ZONA URBANA: TODAS LAS COMUNAS
-    # --------------------------------------------------
     if q in {"urbana", "urbano", "zona urbana"}:
         matches = unique_nonempty(data["COMUNA"].tolist()) if "COMUNA" in data.columns else []
-
         if not matches:
             return data.iloc[0:0], "", 0
-
         result = pd.DataFrame({"COMUNA": matches})
         return result, "Todas las comunas de Pasto", 100
 
-    # --------------------------------------------------
-    # 3. BÚSQUEDA POR COMUNA: MOSTRAR TODOS SUS BARRIOS
-    # --------------------------------------------------
     comuna_matches = find_matches("COMUNA", q)
     if comuna_matches:
         rows = get_related("COMUNA", comuna_matches)
         nombres = ", ".join(value for value, score in comuna_matches)
         return rows, nombres, max(score for value, score in comuna_matches)
 
-    # --------------------------------------------------
-    # 4. BÚSQUEDA POR CORREGIMIENTO
-    # --------------------------------------------------
     corregimiento_matches = find_matches("CORREGIMIENTO", q)
     if corregimiento_matches:
         rows = get_related("CORREGIMIENTO", corregimiento_matches)
         nombres = ", ".join(value for value, score in corregimiento_matches)
         return rows, nombres, max(score for value, score in corregimiento_matches)
 
-    # --------------------------------------------------
-    # 5. BÚSQUEDA POR BARRIO
-    # --------------------------------------------------
     barrio_matches = find_matches("BARRIO", q)
     if barrio_matches:
         rows = get_related("BARRIO", barrio_matches)
         nombres = ", ".join(value for value, score in barrio_matches)
         return rows, nombres, max(score for value, score in barrio_matches)
 
-    # --------------------------------------------------
-    # 6. BÚSQUEDA GENERAL
-    # --------------------------------------------------
     all_matches = []
     for field in data.columns:
         matches = find_matches(field, q)
@@ -237,10 +205,6 @@ def search_records(question, data):
 
     best_score = max(score for field, value, score in all_matches)
     return rows, matched_name, int(best_score)
-
-def display_fields(row):
-    order = [f for f in PRIMARY_FIELDS + EXTRA_FIELDS if f in row.index]
-    return [(field, clean_cell(row[field])) for field in order if clean_cell(row[field])]
 
 def render_result(rows, matched_name, score):
     st.markdown(
@@ -283,32 +247,131 @@ def render_result(rows, matched_name, score):
                 )
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Estilo visual general
+# Estilo visual centrado y limpio
 st.markdown("""
 <style>
 #MainMenu, footer {visibility:hidden;}
-.block-container {padding-top:3.5rem !important; max-width:1180px;}
-.topline {display:flex; align-items:center; justify-content:space-between; gap:18px;
-          border-bottom:1px solid #e7eaf0; padding-bottom:16px; margin-top:15px; margin-bottom:18px;}
-.brand-title {font-size:27px; font-weight:800; color:#17365d; line-height:1.15;}
-.brand-sub {font-size:13px; color:#687386; margin-top:5px;}
-.jc-logo {width:62px; height:62px; border-radius:16px; display:flex; align-items:center;
-          justify-content:center; background:linear-gradient(135deg,#17365d,#247ba0);
-          color:white; font-size:24px; font-weight:900; letter-spacing:1px;
-          box-shadow:0 5px 16px rgba(23,54,93,.18); flex-shrink:0;}
-.search-label {font-size:15px; font-weight:700; color:#24364b; margin:10px 0 5px;}
-div[data-testid="stTextInput"] input {height:52px; border-radius:12px; font-size:17px;}
-div.stButton > button {border-radius:10px; height:48px; font-weight:700;}
-.result-card {background:#fff; border:1px solid #e5eaf0; border-radius:15px;
-              padding:17px 18px; margin:8px 0 15px; box-shadow:0 3px 12px rgba(25,45,75,.045);}
-.field {padding:8px 9px; margin:4px 0; background:#f7f9fc; border-radius:9px; min-height:64px;}
-.field-label {font-size:11px; color:#6c7788; text-transform:uppercase; letter-spacing:.6px; font-weight:700;}
-.field-value {font-size:15px; color:#172b4d; font-weight:650; overflow-wrap:anywhere; margin-top:4px;}
-.extra-title {font-weight:750; color:#244b70; border-top:1px solid #e9edf2; padding-top:12px; margin-top:12px;}
-.match-heading {font-size:18px; color:#1d3557; margin:16px 0 6px;}
-.match-score {float:right; color:#16734a; font-size:12px; background:#e8f6ef; padding:4px 9px; border-radius:20px;}
-.note {font-size:12px; color:#718096;}
+.block-container {padding-top:2.5rem !important; max-width:900px;}
+
+.header-container {
+    text-align: center;
+    margin-top: 15px;
+    margin-bottom: 25px;
+}
+.map-icon {
+    font-size: 55px;
+    line-height: 1;
+    margin-bottom: 10px;
+}
+.brand-title {
+    font-size: 28px;
+    font-weight: 800;
+    color: #17365d;
+    margin-bottom: 2px;
+    letter-spacing: 0.5px;
+}
+.brand-sub {
+    font-size: 15px;
+    color: #687386;
+    font-weight: 500;
+}
+.search-container {
+    background: #ffffff;
+    border: 2px solid #111111;
+    border-radius: 12px;
+    padding: 4px 12px;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    margin-bottom: 6px;
+}
+.search-label {
+    text-align: center;
+    font-size: 15px;
+    font-weight: 600;
+    color: #222222;
+    margin-top: 8px;
+    margin-bottom: 20px;
+}
+div[data-testid="stTextInput"] input {
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 17px;
+    background: transparent !important;
+}
+div[data-testid="stTextInput"] div {
+    background: transparent !important;
+    border: none !important;
+}
+div.stButton > button {
+    border-radius: 10px;
+    height: 48px;
+    font-weight: 700;
+    width: 100%;
+}
+.result-card {
+    background: #fff;
+    border: 1px solid #e5eaf0;
+    border-radius: 15px;
+    padding: 17px 18px;
+    margin: 8px 0 15px;
+    box-shadow: 0 3px 12px rgba(25,45,75,.045);
+}
+.field {
+    padding: 8px 9px;
+    margin: 4px 0;
+    background: #f7f9fc;
+    border-radius: 9px;
+    min-height: 64px;
+}
+.field-label {
+    font-size: 11px;
+    color: #6c7788;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    font-weight: 700;
+}
+.field-value {
+    font-size: 15px;
+    color: #172b4d;
+    font-weight: 650;
+    overflow-wrap: anywhere;
+    margin-top: 4px;
+}
+.extra-title {
+    font-weight: 750;
+    color: #244b70;
+    border-top: 1px solid #e9edf2;
+    padding-top: 12px;
+    margin-top: 12px;
+}
+.match-heading {
+    font-size: 18px;
+    color: #1d3557;
+    margin: 16px 0 6px;
+}
+.match-score {
+    float: right;
+    color: #16734a;
+    font-size: 12px;
+    background: #e8f6ef;
+    padding: 4px 9px;
+    border-radius: 20px;
+}
+.note {
+    font-size: 12px;
+    color: #718096;
+}
 </style>
+""", unsafe_allow_html=True)
+
+# Encabezado centrado con el Pin y subtítulo Pasto - Nariño
+st.markdown("""
+<div class="header-container">
+  <div class="map-icon">📍</div>
+  <div class="brand-title">ASISTENTE TERRITORIAL</div>
+  <div class="brand-sub">Pasto - Nariño</div>
+</div>
 """, unsafe_allow_html=True)
 
 uploaded = None
@@ -322,17 +385,19 @@ if df is None:
     st.info("Para comenzar, coloca el archivo Pasto.xlsx junto a app.py o cárgalo aquí.")
     st.stop()
 
-st.markdown('<div class="search-label">¿Qué lugar o nombre deseas consultar?</div>', unsafe_allow_html=True)
+# Campo de búsqueda y etiqueta ordenados como solicitaste
 c1, c2 = st.columns([5, 1])
 with c1:
     query = st.text_input(
         "Buscar",
-        placeholder="Ejemplo: El Tejar, comuna 5, Catambuco, una dirección o un teléfono…",
+        placeholder="Ejemplo: El Tejar, comuna 5, Catambuco...",
         label_visibility="collapsed",
         key="territorial_query",
     )
 with c2:
     search_clicked = st.button("Buscar", type="primary", use_container_width=True)
+
+st.markdown('<div class="search-label">¿Qué lugar o nombre deseas consultar?</div>', unsafe_allow_html=True)
 
 if search_clicked or query:
     if query.strip():
@@ -350,7 +415,6 @@ with st.expander("Ejemplos de búsqueda"):
     st.write("• Comuna 5")
     st.write("• Catambuco")
     st.write("• Nombre de una vereda o sector")
-    st.write("• Dirección, edificio, local o teléfono (si esos datos están incluidos en el Excel)")
 
 with st.expander("Estado y cobertura de la base"):
     st.write(f"**Archivo consultado:** {source_name}")
@@ -358,12 +422,4 @@ with st.expander("Estado y cobertura de la base"):
     available_primary = [f for f in PRIMARY_FIELDS if f in df.columns]
     available_extra = [f for f in EXTRA_FIELDS if f in df.columns]
     st.write("**Campos territoriales:** " + (", ".join(available_primary) if available_primary else "No identificados"))
-    st.write("**Campos complementarios disponibles:** " + (", ".join(available_extra) if available_extra else "Ninguno"))
-    missing_extra = [f for f in EXTRA_FIELDS if f not in df.columns]
-    if missing_extra:
-        st.warning(
-            "El Excel actual no contiene columnas reconocibles para: "
-            + ", ".join(missing_extra)
-            + ". La aplicación las mostrará automáticamente cuando se agreguen al archivo."
-        )
     st.caption("La aplicación muestra únicamente datos existentes en el Excel. No completa ni inventa información.")
