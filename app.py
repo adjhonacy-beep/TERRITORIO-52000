@@ -287,9 +287,9 @@ def render_result(rows, matched_name, score):
 st.markdown("""
 <style>
 #MainMenu, footer {visibility:hidden;}
-.block-container {padding-top:1.5rem !important; max-width:1180px;}
+.block-container {padding-top:3.5rem !important; max-width:1180px;}
 .topline {display:flex; align-items:center; justify-content:space-between; gap:18px;
-          border-bottom:1px solid #e7eaf0; padding-bottom:16px; margin-bottom:18px;}
+          border-bottom:1px solid #e7eaf0; padding-bottom:16px; margin-top:15px; margin-bottom:18px;}
 .brand-title {font-size:27px; font-weight:800; color:#17365d; line-height:1.15;}
 .brand-sub {font-size:13px; color:#687386; margin-top:5px;}
 .jc-logo {width:62px; height:62px; border-radius:16px; display:flex; align-items:center;
@@ -309,16 +309,6 @@ div.stButton > button {border-radius:10px; height:48px; font-weight:700;}
 .match-score {float:right; color:#16734a; font-size:12px; background:#e8f6ef; padding:4px 9px; border-radius:20px;}
 .note {font-size:12px; color:#718096;}
 </style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div class="topline">
-  <div>
-    <div class="brand-title">Asistente Territorial de Pasto</div>
-    <div class="brand-sub">Consulta organizada de información territorial por coincidencia de nombre</div>
-  </div>
-  <div class="jc-logo">JC</div>
-</div>
 """, unsafe_allow_html=True)
 
 uploaded = None
