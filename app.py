@@ -30,6 +30,7 @@ FIELD_ALIASES = {
     "EDIFICIO": ["EDIFICIO", "EDIFICIOS", "CONJUNTO", "UNIDAD"],
 }
 
+
 def normalize(value):
     if pd.isna(value):
         return ""
@@ -41,6 +42,7 @@ def normalize(value):
     value = re.sub(r"[^a-z0-9#]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
 
+
 def clean_cell(value):
     if pd.isna(value):
         return ""
@@ -50,6 +52,7 @@ def clean_cell(value):
     if re.fullmatch(r"\d+\.0", value):
         value = value[:-2]
     return value
+
 
 def resolve_columns(frame):
     mapping = {}
@@ -64,6 +67,7 @@ def resolve_columns(frame):
                 mapping[target] = normalized[key]
                 break
     return mapping
+
 
 def load_excel(uploaded_file=None):
     path = Path("Pasto.xlsx")
@@ -92,6 +96,7 @@ def load_excel(uploaded_file=None):
     data = data.loc[~data.apply(lambda row: all(not str(v).strip() for v in row), axis=1)]
     return data.reset_index(drop=True), source_name, mapping
 
+
 def unique_nonempty(values):
     found = {}
     for value in values:
@@ -101,6 +106,7 @@ def unique_nonempty(values):
             found[key] = value
     return sorted(found.values(), key=normalize)
 
+
 def search_records(question, data):
     q = normalize(question)
 
@@ -108,24 +114,32 @@ def search_records(question, data):
         return data.iloc[0:0], "", 0
 
     # --------------------------------------------------
-    # 1. BÚSQUEDA RURAL / CORREGIMIENTOS
+    # 1. BÚSQUEDA RURAL / CORREGIMIENTOS (CON DATOS COMPLETOS)
     # --------------------------------------------------
     if q in {"rural", "zona rural", "corregimientos", "corregimiento"}:
-        matches = unique_nonempty(data["CORREGIMIENTO"].tolist()) if "CORREGIMIENTO" in data.columns else []
-        if not matches:
+        mask = pd.Series(False, index=data.index)
+        if "ZONA" in data.columns:
+            mask |= data["ZONA"].map(normalize).str.contains("rural", na=False)
+        if "CORREGIMIENTO" in data.columns:
+            mask |= data["CORREGIMIENTO"].map(lambda x: bool(clean_cell(x)))
+        rows = data[mask].drop_duplicates().reset_index(drop=True)
+        if rows.empty:
             return data.iloc[0:0], "", 0
-        result = pd.DataFrame({"CORREGIMIENTO": matches})
-        return result, "Todos los corregimientos de Pasto", 100
+        return rows, "Zona Rural / Todos los corregimientos de Pasto", 100
 
     # --------------------------------------------------
-    # 2. BÚSQUEDA URBANA / COMUNAS
+    # 2. BÚSQUEDA URBANA / COMUNAS (CON DATOS COMPLETOS)
     # --------------------------------------------------
     if q in {"urbana", "urbano", "zona urbana", "comunas", "comuna"}:
-        matches = unique_nonempty(data["COMUNA"].tolist()) if "COMUNA" in data.columns else []
-        if not matches:
+        mask = pd.Series(False, index=data.index)
+        if "ZONA" in data.columns:
+            mask |= data["ZONA"].map(normalize).str.contains("urban", na=False)
+        if "COMUNA" in data.columns:
+            mask |= data["COMUNA"].map(lambda x: bool(clean_cell(x)))
+        rows = data[mask].drop_duplicates().reset_index(drop=True)
+        if rows.empty:
             return data.iloc[0:0], "", 0
-        result = pd.DataFrame({"COMUNA": matches})
-        return result, "Todas las comunas de Pasto", 100
+        return rows, "Zona Urbana / Todas las comunas de Pasto", 100
 
     def match_score(query, value):
         nq = normalize(query)
@@ -162,37 +176,24 @@ def search_records(question, data):
         normalized_values = {normalize(value) for value, score in matches}
         return data[data[field].map(normalize).isin(normalized_values)].drop_duplicates().reset_index(drop=True)
 
-    comuna_matches = find_matches("COMUNA", q)
-    if comuna_matches:
-        rows = get_related("COMUNA", comuna_matches)
-        nombres = ", ".join(value for value, score in comuna_matches)
-        return rows, nombres, max(score for value, score in comuna_matches)
+    # Prioridad jerárquica para búsquedas directas
+    for priority_field in ["ZONA", "COMUNA", "CORREGIMIENTO", "BARRIO", "VEREDA", "SECTOR", "EDIFICIO"]:
+        matches = find_matches(priority_field, q)
+        if matches:
+            rows = get_related(priority_field, matches)
+            nombres = ", ".join(value for value, score in matches[:10])
+            if len(matches) > 10:
+                nombres += f" y {len(matches) - 10} más"
+            return rows, nombres, max(score for value, score in matches)
 
-    corregimiento_matches = find_matches("CORREGIMIENTO", q)
-    if corregimiento_matches:
-        rows = get_related("CORREGIMIENTO", corregimiento_matches)
-        nombres = ", ".join(value for value, score in corregimiento_matches)
-        return rows, nombres, max(score for value, score in corregimiento_matches)
-
-    barrio_matches = find_matches("BARRIO", q)
-    if barrio_matches:
-        rows = get_related("BARRIO", barrio_matches)
-        nombres = ", ".join(value for value, score in barrio_matches)
-        return rows, nombres, max(score for value, score in barrio_matches)
-
+    # Búsqueda amplia si no hubo coincidencia directa en ningún campo
     all_matches = []
+    tokens = [token for token in q.split() if len(token) >= 3]
     for field in data.columns:
-        matches = find_matches(field, q)
-        for value, score in matches:
-            all_matches.append((field, value, score))
-
-    if not all_matches:
-        tokens = [token for token in q.split() if len(token) >= 3]
-        for field in data.columns:
-            for value in unique_nonempty(data[field].tolist()):
-                nv = normalize(value)
-                if nv and any(token in nv for token in tokens):
-                    all_matches.append((field, value, 78))
+        for value in unique_nonempty(data[field].tolist()):
+            nv = normalize(value)
+            if nv and any(token in nv for token in tokens):
+                all_matches.append((field, value, 78))
 
     if not all_matches:
         return data.iloc[0:0], "", 0
@@ -211,6 +212,25 @@ def search_records(question, data):
 
     best_score = max(score for field, value, score in all_matches)
     return rows, matched_name, int(best_score)
+
+
+def format_field_values(values, preview_limit=5):
+    """Muestra una vista previa y un botón desplegable si hay más registros."""
+    if len(values) <= preview_limit:
+        return "<br>".join(values)
+
+    visible = "<br>".join(values[:preview_limit])
+    hidden = "<br>".join(values[preview_limit:])
+    remaining = len(values) - preview_limit
+
+    return (
+        f"{visible}"
+        f"<details class='more-details'>"
+        f"<summary class='more-btn'>+ Ver {remaining} más</summary>"
+        f"<div class='more-content'>{hidden}</div>"
+        f"</details>"
+    )
+
 
 def render_result(rows, matched_name, score):
     st.markdown(
@@ -231,27 +251,34 @@ def render_result(rows, matched_name, score):
     st.markdown('<div class="result-card">', unsafe_allow_html=True)
     main = [(k, v) for k, v in grouped.items() if k in PRIMARY_FIELDS]
     extra = [(k, v) for k, v in grouped.items() if k in EXTRA_FIELDS]
+
     cols = st.columns(3)
     for i, (field, values) in enumerate(main):
-        value_html = "<br>".join(values) if len(values) <= 15 else "<br>".join(values[:15]) + f"<br><span class='note'>y {len(values)-15} más…</span>"
+        value_html = format_field_values(values, preview_limit=5)
         with cols[i % 3]:
             st.markdown(
-                f'<div class="field"><div class="field-label">{field.title()}</div>'
-                f'<div class="field-value">{value_html}</div></div>',
+                f'<div class="field">'
+                f'<div class="field-label">{field.title()} <span class="count-badge">({len(values)})</span></div>'
+                f'<div class="field-value">{value_html}</div>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
+
     if extra:
         st.markdown('<div class="extra-title">Información complementaria</div>', unsafe_allow_html=True)
         extra_cols = st.columns(2)
         for i, (field, values) in enumerate(extra):
-            value_html = "<br>".join(values) if len(values) <= 15 else "<br>".join(values[:15]) + f"<br><span class='note'>y {len(values)-15} más…</span>"
+            value_html = format_field_values(values, preview_limit=5)
             with extra_cols[i % 2]:
                 st.markdown(
-                    f'<div class="field"><div class="field-label">{field.title()}</div>'
-                    f'<div class="field-value">{value_html}</div></div>',
+                    f'<div class="field">'
+                    f'<div class="field-label">{field.title()} <span class="count-badge">({len(values)})</span></div>'
+                    f'<div class="field-value">{value_html}</div>'
+                    f'</div>',
                     unsafe_allow_html=True,
                 )
     st.markdown('</div>', unsafe_allow_html=True)
+
 
 # Estilo visual centrado y limpio
 st.markdown("""
@@ -314,11 +341,11 @@ div.stButton > button {
     box-shadow: 0 3px 12px rgba(25,45,75,.045);
 }
 .field {
-    padding: 8px 9px;
-    margin: 4px 0;
+    padding: 10px 12px;
+    margin: 5px 0;
     background: #f7f9fc;
     border-radius: 9px;
-    min-height: 64px;
+    min-height: 68px;
 }
 .field-label {
     font-size: 11px;
@@ -327,12 +354,50 @@ div.stButton > button {
     letter-spacing: .6px;
     font-weight: 700;
 }
+.count-badge {
+    color: #17365d;
+    font-weight: 800;
+}
 .field-value {
     font-size: 15px;
     color: #172b4d;
-    font-weight: 650;
+    font-weight: 600;
     overflow-wrap: anywhere;
+    margin-top: 5px;
+    line-height: 1.45;
+}
+/* Estilos del botón desplegable "Ver más" */
+.more-details {
+    margin-top: 6px;
+}
+.more-btn {
+    display: inline-block;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    color: #17365d;
+    background: #e3ecf7;
+    padding: 3px 10px;
+    border-radius: 12px;
+    user-select: none;
+    list-style: none;
+    transition: background 0.2s;
+}
+.more-btn::-webkit-details-marker {
+    display: none;
+}
+.more-btn:hover {
+    background: #d0e0f3;
+}
+.more-details[open] .more-btn {
+    background: #17365d;
+    color: #ffffff;
+    margin-bottom: 6px;
+}
+.more-content {
     margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px dashed #cbd5e1;
 }
 .extra-title {
     font-weight: 750;
@@ -353,10 +418,6 @@ div.stButton > button {
     background: #e8f6ef;
     padding: 4px 9px;
     border-radius: 20px;
-}
-.note {
-    font-size: 12px;
-    color: #718096;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -405,4 +466,3 @@ if search_clicked or query:
             st.caption("Verifica la escritura o intenta con una parte más corta del nombre.")
     else:
         st.info("Escribe un nombre en el recuadro superior para iniciar la búsqueda.")
-    
