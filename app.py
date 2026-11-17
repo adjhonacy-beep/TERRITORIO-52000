@@ -1,4 +1,6 @@
+
 import re
+import html
 import unicodedata
 from pathlib import Path
 
@@ -7,8 +9,8 @@ import streamlit as st
 from rapidfuzz import fuzz
 
 # ------------------------------------------------------------
-# ASISTENTE - JC
-# Consulta basada en coincidencias con el Excel; no inventa datos.
+# ASISTENTE TERRITORIAL DE PASTO - JC
+# Búsqueda basada exclusivamente en información del Excel.
 # ------------------------------------------------------------
 
 st.set_page_config(
@@ -18,8 +20,13 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-PRIMARY_FIELDS = ["ZONA", "COMUNA", "BARRIO", "CORREGIMIENTO", "VEREDA", "SECTOR"]
+PRIMARY_FIELDS = [
+    "ZONA", "COMUNA", "BARRIO",
+    "CORREGIMIENTO", "VEREDA", "SECTOR"
+]
+
 EXTRA_FIELDS = ["EDIFICIO"]
+
 FIELD_ALIASES = {
     "ZONA": ["ZONA"],
     "COMUNA": ["COMUNA", "COMUNAS"],
@@ -31,167 +38,330 @@ FIELD_ALIASES = {
 }
 
 
+# ------------------------------------------------------------
+# NORMALIZACIÓN Y LIMPIEZA
+# ------------------------------------------------------------
+
 def normalize(value):
     if pd.isna(value):
         return ""
+
     value = str(value).strip().lower()
+
     value = "".join(
         c for c in unicodedata.normalize("NFD", value)
         if unicodedata.category(c) != "Mn"
     )
+
     value = re.sub(r"[^a-z0-9#]+", " ", value)
+
     return re.sub(r"\s+", " ", value).strip()
 
 
 def clean_cell(value):
     if pd.isna(value):
         return ""
+
     value = str(value).strip()
+
     if value.lower() in {"nan", "none", "null"}:
         return ""
+
     if re.fullmatch(r"\d+\.0", value):
         value = value[:-2]
+
     return value
 
 
 def resolve_columns(frame):
     mapping = {}
     normalized = {}
+
     for col in frame.columns:
         key = normalize(col).replace(" ", "")
         normalized.setdefault(key, col)
+
     for target, aliases in FIELD_ALIASES.items():
         for alias in aliases:
             key = normalize(alias).replace(" ", "")
+
             if key in normalized:
                 mapping[target] = normalized[key]
                 break
+
     return mapping
 
 
+# ------------------------------------------------------------
+# CARGA DEL EXCEL
+# CONSERVA TODAS LAS COLUMNAS ORIGINALES
+# ------------------------------------------------------------
+
 def load_excel(uploaded_file=None):
+
     path = Path("Pasto.xlsx")
+
     if uploaded_file is not None:
         raw = pd.read_excel(uploaded_file, dtype=str)
         source_name = uploaded_file.name
+
     elif path.exists():
         raw = pd.read_excel(path, dtype=str)
         source_name = path.name
+
     else:
         return None, None, None
 
     mapping = resolve_columns(raw)
+
     if not any(field in mapping for field in PRIMARY_FIELDS):
         raise ValueError(
             "No se reconocieron las columnas territoriales. "
             "Verifica los encabezados del Excel."
         )
 
-    data = pd.DataFrame()
-    for field, original in mapping.items():
-        data[field] = raw[original].map(clean_cell)
+    # Conservar todas las columnas del archivo
+    data = raw.copy()
 
-    available = [f for f in PRIMARY_FIELDS + EXTRA_FIELDS if f in data.columns]
-    data = data[available]
-    data = data.loc[~data.apply(lambda row: all(not str(v).strip() for v in row), axis=1)]
-    return data.reset_index(drop=True), source_name, mapping
+    # Normalizar los nombres de las columnas reconocidas
+    rename_map = {
+        original: field
+        for field, original in mapping.items()
+    }
 
+    data = data.rename(columns=rename_map)
+
+    # Evitar columnas duplicadas por los cambios de nombre
+    data = data.loc[:, ~data.columns.duplicated()]
+
+    # Limpiar todas las celdas del Excel
+    for col in data.columns:
+        data[col] = data[col].map(clean_cell)
+
+    # Eliminar filas completamente vacías
+    data = data.loc[
+        ~data.apply(
+            lambda row: all(not str(v).strip() for v in row),
+            axis=1
+        )
+    ]
+
+    return (
+        data.drop_duplicates().reset_index(drop=True),
+        source_name,
+        mapping
+    )
+
+
+# ------------------------------------------------------------
+# VALORES ÚNICOS Y SIN CELDAS VACÍAS
+# ------------------------------------------------------------
 
 def unique_nonempty(values):
+
     found = {}
+
     for value in values:
+
         value = clean_cell(value)
         key = normalize(value)
+
         if key and key not in found:
             found[key] = value
+
     return sorted(found.values(), key=normalize)
 
 
+# ------------------------------------------------------------
+# MOTOR DE BÚSQUEDA
+# ------------------------------------------------------------
+
 def search_records(question, data):
+
     q = normalize(question)
 
     if not q:
         return data.iloc[0:0], "", 0
 
-    # --------------------------------------------------
-    # 1. BÚSQUEDA RURAL / CORREGIMIENTOS (CON DATOS COMPLETOS)
-    # --------------------------------------------------
-    if q in {"rural", "zona rural", "corregimientos", "corregimiento"}:
+    # --------------------------------------------------------
+    # BÚSQUEDA RURAL
+    # --------------------------------------------------------
+
+    if q in {
+        "rural",
+        "zona rural",
+        "corregimientos",
+        "corregimiento"
+    }:
+
         mask = pd.Series(False, index=data.index)
+
         if "ZONA" in data.columns:
-            mask |= data["ZONA"].map(normalize).str.contains("rural", na=False)
+            mask |= data["ZONA"].map(
+                normalize
+            ).str.contains("rural", na=False)
+
         if "CORREGIMIENTO" in data.columns:
-            mask |= data["CORREGIMIENTO"].map(lambda x: bool(clean_cell(x)))
+            mask |= data["CORREGIMIENTO"].map(
+                lambda x: bool(clean_cell(x))
+            )
+
         rows = data[mask].drop_duplicates().reset_index(drop=True)
+
         if rows.empty:
             return data.iloc[0:0], "", 0
+
         return rows, "Zona Rural / Todos los corregimientos de Pasto", 100
 
-    # --------------------------------------------------
-    # 2. BÚSQUEDA URBANA / COMUNAS (CON DATOS COMPLETOS)
-    # --------------------------------------------------
-    if q in {"urbana", "urbano", "zona urbana", "comunas", "comuna"}:
+    # --------------------------------------------------------
+    # BÚSQUEDA URBANA
+    # --------------------------------------------------------
+
+    if q in {
+        "urbana",
+        "urbano",
+        "zona urbana",
+        "comunas",
+        "comuna"
+    }:
+
         mask = pd.Series(False, index=data.index)
+
         if "ZONA" in data.columns:
-            mask |= data["ZONA"].map(normalize).str.contains("urban", na=False)
+            mask |= data["ZONA"].map(
+                normalize
+            ).str.contains("urban", na=False)
+
         if "COMUNA" in data.columns:
-            mask |= data["COMUNA"].map(lambda x: bool(clean_cell(x)))
+            mask |= data["COMUNA"].map(
+                lambda x: bool(clean_cell(x))
+            )
+
         rows = data[mask].drop_duplicates().reset_index(drop=True)
+
         if rows.empty:
             return data.iloc[0:0], "", 0
+
         return rows, "Zona Urbana / Todas las comunas de Pasto", 100
 
+    # --------------------------------------------------------
+    # COMPARACIÓN DE COINCIDENCIAS
+    # --------------------------------------------------------
+
     def match_score(query, value):
+
         nq = normalize(query)
         nv = normalize(value)
 
         if not nq or not nv:
             return 0
 
-        nq_alt = re.sub(r"^(comuna|comunas)\s*", "", nq).strip()
-        nv_alt = re.sub(r"^(comuna|comunas)\s*", "", nv).strip()
+        nq_alt = re.sub(
+            r"^(comuna|comunas)\s*", "", nq
+        ).strip()
+
+        nv_alt = re.sub(
+            r"^(comuna|comunas)\s*", "", nv
+        ).strip()
 
         if nq in (nv, nv_alt) or nv in (nq, nq_alt):
             return 100
+
         if nq in nv or nv in nq:
             return 95
+
         if nq_alt and nq_alt in nv_alt:
             return 95
 
-        return max(fuzz.ratio(nq, nv), fuzz.ratio(nq_alt, nv_alt) if nq_alt else 0)
+        return max(
+            fuzz.ratio(nq, nv),
+            fuzz.ratio(nq_alt, nv_alt) if nq_alt else 0
+        )
 
     def find_matches(field, query, threshold=76):
+
         if field not in data.columns:
             return []
+
         matches = []
+
         for value in unique_nonempty(data[field].tolist()):
+
             score = match_score(query, value)
+
             if score >= threshold:
                 matches.append((value, score))
+
         return matches
 
     def get_related(field, matches):
+
         if field not in data.columns or not matches:
             return data.iloc[0:0]
-        normalized_values = {normalize(value) for value, score in matches}
-        return data[data[field].map(normalize).isin(normalized_values)].drop_duplicates().reset_index(drop=True)
 
-    # Prioridad jerárquica para búsquedas directas
-    for priority_field in ["ZONA", "COMUNA", "CORREGIMIENTO", "BARRIO", "VEREDA", "SECTOR", "EDIFICIO"]:
+        normalized_values = {
+            normalize(value)
+            for value, score in matches
+        }
+
+        return (
+            data[
+                data[field].map(normalize).isin(normalized_values)
+            ]
+            .drop_duplicates()
+            .reset_index(drop=True)
+        )
+
+    # --------------------------------------------------------
+    # PRIORIDAD DE BÚSQUEDA TERRITORIAL
+    # --------------------------------------------------------
+
+    for priority_field in [
+        "ZONA",
+        "COMUNA",
+        "CORREGIMIENTO",
+        "BARRIO",
+        "VEREDA",
+        "SECTOR",
+        "EDIFICIO"
+    ]:
+
         matches = find_matches(priority_field, q)
+
         if matches:
+
             rows = get_related(priority_field, matches)
-            nombres = ", ".join(value for value, score in matches[:10])
+
+            nombres = ", ".join(
+                value for value, score in matches[:10]
+            )
+
             if len(matches) > 10:
                 nombres += f" y {len(matches) - 10} más"
-            return rows, nombres, max(score for value, score in matches)
 
-    # Búsqueda amplia si no hubo coincidencia directa en ningún campo
+            return (
+                rows,
+                nombres,
+                max(score for value, score in matches)
+            )
+
+    # --------------------------------------------------------
+    # BÚSQUEDA AMPLIA EN TODAS LAS COLUMNAS
+    # --------------------------------------------------------
+
     all_matches = []
-    tokens = [token for token in q.split() if len(token) >= 3]
+
+    tokens = [
+        token for token in q.split()
+        if len(token) >= 3
+    ]
+
     for field in data.columns:
+
         for value in unique_nonempty(data[field].tolist()):
+
             nv = normalize(value)
+
             if nv and any(token in nv for token in tokens):
                 all_matches.append((field, value, 78))
 
@@ -199,47 +369,92 @@ def search_records(question, data):
         return data.iloc[0:0], "", 0
 
     result_frames = []
+
     for field, value, score in all_matches:
-        matched_rows = data[data[field].map(normalize) == normalize(value)]
+
+        matched_rows = data[
+            data[field].map(normalize) == normalize(value)
+        ]
+
         result_frames.append(matched_rows)
 
-    rows = pd.concat(result_frames, ignore_index=True).drop_duplicates().reset_index(drop=True)
-    names = unique_nonempty([value for field, value, score in all_matches])
+    rows = (
+        pd.concat(result_frames, ignore_index=True)
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
+
+    names = unique_nonempty([
+        value for field, value, score in all_matches
+    ])
+
     matched_name = ", ".join(names[:10])
 
     if len(names) > 10:
         matched_name += f" y {len(names) - 10} más"
 
-    best_score = max(score for field, value, score in all_matches)
+    best_score = max(
+        score for field, value, score in all_matches
+    )
+
     return rows, matched_name, int(best_score)
 
 
-def format_field_values(values, preview_limit=5):
-    """Muestra una vista previa y un botón desplegable si hay más registros."""
-    if len(values) <= preview_limit:
-        return "<br>".join(values)
+# ------------------------------------------------------------
+# PRESENTACIÓN DE VALORES
+# ------------------------------------------------------------
 
-    visible = "<br>".join(values[:preview_limit])
-    hidden = "<br>".join(values[preview_limit:])
-    remaining = len(values) - preview_limit
+def format_field_values(values, preview_limit=5):
+
+    # Evitar repetidos y celdas vacías
+    values = unique_nonempty(values)
+
+    # Escapar contenido HTML proveniente del Excel
+    safe_values = [
+        html.escape(value)
+        for value in values
+    ]
+
+    if len(safe_values) <= preview_limit:
+        return "<br>".join(safe_values)
+
+    visible = "<br>".join(
+        safe_values[:preview_limit]
+    )
+
+    hidden = "<br>".join(
+        safe_values[preview_limit:]
+    )
+
+    remaining = len(safe_values) - preview_limit
 
     return (
         f"{visible}"
         f"<details class='more-details'>"
-        f"<summary class='more-btn'>+ Ver {remaining} más</summary>"
+        f"<summary class='more-btn'>"
+        f"+ Ver {remaining} más"
+        f"</summary>"
         f"<div class='more-content'>{hidden}</div>"
         f"</details>"
     )
 
 
+# ------------------------------------------------------------
+# PRESENTACIÓN DE RESULTADOS
+# CONSOLIDA INFORMACIÓN DE TODAS LAS FILAS ENCONTRADAS
+# ------------------------------------------------------------
 
 def render_result(rows, matched_name, score):
+
     rows = rows.drop_duplicates().reset_index(drop=True)
 
+    safe_name = html.escape(str(matched_name))
+
     st.markdown(
-        f'<div class="match-heading">Coincidencia encontrada: '
-        f'<b>{matched_name}</b>'
-        f'<span class="match-score">{score}%</span></div>',
+        f'<div class="match-heading">'
+        f'Coincidencia encontrada: <b>{safe_name}</b>'
+        f'<span class="match-score">{score}%</span>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
@@ -248,7 +463,7 @@ def render_result(rows, matched_name, score):
         "Se excluyen celdas vacías y se unifican los datos repetidos."
     )
 
-    # Orden de presentación de los campos
+    # Orden de presentación
     ordered_fields = (
         [f for f in PRIMARY_FIELDS if f in rows.columns]
         + [f for f in EXTRA_FIELDS if f in rows.columns]
@@ -261,9 +476,9 @@ def render_result(rows, matched_name, score):
     grouped = {}
 
     for field in ordered_fields:
+
         values = unique_nonempty(rows[field].tolist())
 
-        # No mostrar columnas sin información
         if values:
             grouped[field] = values
 
@@ -271,15 +486,20 @@ def render_result(rows, matched_name, score):
         st.warning("No hay información disponible para mostrar.")
         return
 
-    st.markdown('<div class="result-card">', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="result-card">',
+        unsafe_allow_html=True
+    )
 
     main_fields = [
-        (k, v) for k, v in grouped.items()
+        (k, v)
+        for k, v in grouped.items()
         if k in PRIMARY_FIELDS
     ]
 
     extra_fields = [
-        (k, v) for k, v in grouped.items()
+        (k, v)
+        for k, v in grouped.items()
         if k not in PRIMARY_FIELDS
     ]
 
@@ -287,13 +507,18 @@ def render_result(rows, matched_name, score):
     cols = st.columns(3)
 
     for i, (field, values) in enumerate(main_fields):
-        value_html = format_field_values(values, preview_limit=5)
+
+        value_html = format_field_values(
+            values,
+            preview_limit=5
+        )
 
         with cols[i % 3]:
+
             st.markdown(
                 f'<div class="field">'
                 f'<div class="field-label">'
-                f'{field.title()} '
+                f'{html.escape(str(field.title()))} '
                 f'<span class="count-badge">({len(values)})</span>'
                 f'</div>'
                 f'<div class="field-value">{value_html}</div>'
@@ -301,23 +526,31 @@ def render_result(rows, matched_name, score):
                 unsafe_allow_html=True,
             )
 
-    # Información adicional del Excel
+    # Información complementaria
     if extra_fields:
+
         st.markdown(
-            '<div class="extra-title">Información complementaria</div>',
+            '<div class="extra-title">'
+            'Información complementaria'
+            '</div>',
             unsafe_allow_html=True,
         )
 
         extra_cols = st.columns(3)
 
         for i, (field, values) in enumerate(extra_fields):
-            value_html = format_field_values(values, preview_limit=5)
+
+            value_html = format_field_values(
+                values,
+                preview_limit=5
+            )
 
             with extra_cols[i % 3]:
+
                 st.markdown(
                     f'<div class="field">'
                     f'<div class="field-label">'
-                    f'{field.title()} '
+                    f'{html.escape(str(field.title()))} '
                     f'<span class="count-badge">({len(values)})</span>'
                     f'</div>'
                     f'<div class="field-value">{value_html}</div>'
@@ -328,22 +561,34 @@ def render_result(rows, matched_name, score):
     st.markdown('</div>', unsafe_allow_html=True)
 
 
-# Estilo visual centrado y limpio
+# ------------------------------------------------------------
+# DISEÑO VISUAL
+# ------------------------------------------------------------
+
 st.markdown("""
 <style>
-#MainMenu, footer {visibility:hidden;}
-.block-container {padding-top:2.5rem !important; max-width:900px;}
+
+#MainMenu, footer {
+    visibility: hidden;
+}
+
+.block-container {
+    padding-top: 2.5rem !important;
+    max-width: 900px;
+}
 
 .header-container {
     text-align: center;
     margin-top: 15px;
     margin-bottom: 25px;
 }
+
 .map-icon {
     font-size: 55px;
     line-height: 1;
     margin-bottom: 10px;
 }
+
 .brand-title {
     font-size: 28px;
     font-weight: 800;
@@ -351,11 +596,13 @@ st.markdown("""
     margin-bottom: 2px;
     letter-spacing: 0.5px;
 }
+
 .brand-sub {
     font-size: 15px;
     color: #687386;
     font-weight: 500;
 }
+
 .search-label {
     text-align: center;
     font-size: 15px;
@@ -364,22 +611,33 @@ st.markdown("""
     margin-top: 8px;
     margin-bottom: 20px;
 }
+
 div[data-testid="stTextInput"] input {
     border: none !important;
     box-shadow: none !important;
     font-size: 17px;
     background: transparent !important;
 }
+
 div[data-testid="stTextInput"] div {
     background: transparent !important;
     border: none !important;
 }
+
 div.stButton > button {
     border-radius: 10px;
     height: 48px;
     font-weight: 700;
     width: 100%;
 }
+
+div[data-testid="stFormSubmitButton"] button {
+    border-radius: 10px;
+    height: 48px;
+    font-weight: 700;
+    width: 100%;
+}
+
 .result-card {
     background: #fff;
     border: 1px solid #e5eaf0;
@@ -388,6 +646,7 @@ div.stButton > button {
     margin: 8px 0 15px;
     box-shadow: 0 3px 12px rgba(25,45,75,.045);
 }
+
 .field {
     padding: 10px 12px;
     margin: 5px 0;
@@ -395,6 +654,7 @@ div.stButton > button {
     border-radius: 9px;
     min-height: 68px;
 }
+
 .field-label {
     font-size: 11px;
     color: #6c7788;
@@ -402,10 +662,12 @@ div.stButton > button {
     letter-spacing: .6px;
     font-weight: 700;
 }
+
 .count-badge {
     color: #17365d;
     font-weight: 800;
 }
+
 .field-value {
     font-size: 15px;
     color: #172b4d;
@@ -414,10 +676,11 @@ div.stButton > button {
     margin-top: 5px;
     line-height: 1.45;
 }
-/* Estilos del botón desplegable "Ver más" */
+
 .more-details {
     margin-top: 6px;
 }
+
 .more-btn {
     display: inline-block;
     cursor: pointer;
@@ -431,22 +694,27 @@ div.stButton > button {
     list-style: none;
     transition: background 0.2s;
 }
+
 .more-btn::-webkit-details-marker {
     display: none;
 }
+
 .more-btn:hover {
     background: #d0e0f3;
 }
+
 .more-details[open] .more-btn {
     background: #17365d;
     color: #ffffff;
     margin-bottom: 6px;
 }
+
 .more-content {
     margin-top: 4px;
     padding-top: 4px;
     border-top: 1px dashed #cbd5e1;
 }
+
 .extra-title {
     font-weight: 750;
     color: #244b70;
@@ -454,11 +722,13 @@ div.stButton > button {
     padding-top: 12px;
     margin-top: 12px;
 }
+
 .match-heading {
     font-size: 18px;
     color: #1d3557;
     margin: 16px 0 6px;
 }
+
 .match-score {
     float: right;
     color: #16734a;
@@ -467,50 +737,124 @@ div.stButton > button {
     padding: 4px 9px;
     border-radius: 20px;
 }
+
 </style>
 """, unsafe_allow_html=True)
 
-# Encabezado centrado con el Pin y subtítulo Pasto - Nariño
+
+# ------------------------------------------------------------
+# ENCABEZADO
+# ------------------------------------------------------------
+
 st.markdown("""
 <div class="header-container">
-  <div class="map-icon">📍</div>
-  <div class="brand-title">ASISTENTE TERRITORIAL</div>
-  <div class="brand-sub">Pasto - Nariño</div>
+    <div class="map-icon">📍</div>
+    <div class="brand-title">ASISTENTE TERRITORIAL</div>
+    <div class="brand-sub">Pasto - Nariño</div>
 </div>
 """, unsafe_allow_html=True)
 
+
+# ------------------------------------------------------------
+# CARGA DE INFORMACIÓN
+# ------------------------------------------------------------
+
 uploaded = None
+
 try:
     df, source_name, column_map = load_excel(uploaded)
+
 except Exception as exc:
-    st.error(f"No fue posible leer el archivo Excel: {exc}")
+
+    st.error(
+        f"No fue posible leer el archivo Excel: {exc}"
+    )
+
     st.stop()
+
 
 if df is None:
-    st.info("Para comenzar, coloca el archivo Pasto.xlsx junto a app.py o cárgalo aquí.")
+
+    st.info(
+        "Para comenzar, coloca el archivo Pasto.xlsx "
+        "junto a app.py."
+    )
+
     st.stop()
 
-# Campo de búsqueda y etiqueta ordenados
-c1, c2 = st.columns([5, 1])
-with c1:
-    query = st.text_input(
-        "Buscar",
-        placeholder="Ejemplo: rural, comunas, El Tejar, comuna 5...",
-        label_visibility="collapsed",
-        key="territorial_query",
-    )
-with c2:
-    search_clicked = st.button("Buscar", type="primary", use_container_width=True)
 
-st.markdown('<div class="search-label">¿Qué lugar o nombre deseas consultar?</div>', unsafe_allow_html=True)
+# ------------------------------------------------------------
+# BÚSQUEDA CON ENTER O BOTÓN
+# ------------------------------------------------------------
 
-if search_clicked or query:
+st.markdown(
+    '<div class="search-label">'
+    '¿Qué lugar o nombre deseas consultar?'
+    '</div>',
+    unsafe_allow_html=True
+)
+
+with st.form(key="territorial_search_form"):
+
+    c1, c2 = st.columns([5, 1])
+
+    with c1:
+
+        query = st.text_input(
+            "Buscar",
+            placeholder=(
+                "Ejemplo: rural, comunas, El Tejar, comuna 5..."
+            ),
+            label_visibility="collapsed",
+            key="territorial_query",
+        )
+
+    with c2:
+
+        search_clicked = st.form_submit_button(
+            "Buscar",
+            type="primary",
+            use_container_width=True
+        )
+
+
+# ------------------------------------------------------------
+# EJECUCIÓN DE LA BÚSQUEDA
+# ENTER O BOTÓN BUSCAR
+# ------------------------------------------------------------
+
+if search_clicked:
+
     if query.strip():
-        results, matched_name, score = search_records(query, df)
+
+        results, matched_name, score = search_records(
+            query,
+            df
+        )
+
         if len(results):
-            render_result(results, matched_name, score)
+
+            render_result(
+                results,
+                matched_name,
+                score
+            )
+
         else:
-            st.warning("No encontré una coincidencia suficientemente clara en el Excel.")
-            st.caption("Verifica la escritura o intenta con una parte más corta del nombre.")
+
+            st.warning(
+                "No encontré una coincidencia suficientemente "
+                "clara en el Excel."
+            )
+
+            st.caption(
+                "Verifica la escritura o intenta con una "
+                "parte más corta del nombre."
+            )
+
     else:
-        st.info("Escribe un nombre en el recuadro superior para iniciar la búsqueda.")
+
+        st.info(
+            "Escribe un nombre en el recuadro superior "
+            "para iniciar la búsqueda."
+        )
