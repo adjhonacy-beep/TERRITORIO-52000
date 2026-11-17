@@ -232,51 +232,99 @@ def format_field_values(values, preview_limit=5):
     )
 
 
+
 def render_result(rows, matched_name, score):
+    rows = rows.drop_duplicates().reset_index(drop=True)
+
     st.markdown(
-        f'<div class="match-heading">Coincidencia encontrada: <b>{matched_name}</b>'
+        f'<div class="match-heading">Coincidencia encontrada: '
+        f'<b>{matched_name}</b>'
         f'<span class="match-score">{score}%</span></div>',
         unsafe_allow_html=True,
     )
-    if len(rows) > 1:
-        st.caption(f"{len(rows)} registros relacionados encontrados en el archivo. Los valores repetidos se agrupan.")
+
+    st.caption(
+        f"{len(rows)} filas relacionadas encontradas en el Excel. "
+        "Se excluyen celdas vacías y se unifican los datos repetidos."
+    )
+
+    # Orden de presentación de los campos
+    ordered_fields = (
+        [f for f in PRIMARY_FIELDS if f in rows.columns]
+        + [f for f in EXTRA_FIELDS if f in rows.columns]
+        + [
+            f for f in rows.columns
+            if f not in PRIMARY_FIELDS + EXTRA_FIELDS
+        ]
+    )
 
     grouped = {}
-    for field in PRIMARY_FIELDS + EXTRA_FIELDS:
-        if field in rows.columns:
-            vals = unique_nonempty(rows[field].tolist())
-            if vals:
-                grouped[field] = vals
+
+    for field in ordered_fields:
+        values = unique_nonempty(rows[field].tolist())
+
+        # No mostrar columnas sin información
+        if values:
+            grouped[field] = values
+
+    if not grouped:
+        st.warning("No hay información disponible para mostrar.")
+        return
 
     st.markdown('<div class="result-card">', unsafe_allow_html=True)
-    main = [(k, v) for k, v in grouped.items() if k in PRIMARY_FIELDS]
-    extra = [(k, v) for k, v in grouped.items() if k in EXTRA_FIELDS]
 
+    main_fields = [
+        (k, v) for k, v in grouped.items()
+        if k in PRIMARY_FIELDS
+    ]
+
+    extra_fields = [
+        (k, v) for k, v in grouped.items()
+        if k not in PRIMARY_FIELDS
+    ]
+
+    # Información territorial
     cols = st.columns(3)
-    for i, (field, values) in enumerate(main):
+
+    for i, (field, values) in enumerate(main_fields):
         value_html = format_field_values(values, preview_limit=5)
+
         with cols[i % 3]:
             st.markdown(
                 f'<div class="field">'
-                f'<div class="field-label">{field.title()} <span class="count-badge">({len(values)})</span></div>'
+                f'<div class="field-label">'
+                f'{field.title()} '
+                f'<span class="count-badge">({len(values)})</span>'
+                f'</div>'
                 f'<div class="field-value">{value_html}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
 
-    if extra:
-        st.markdown('<div class="extra-title">Información complementaria</div>', unsafe_allow_html=True)
-        extra_cols = st.columns(2)
-        for i, (field, values) in enumerate(extra):
+    # Información adicional del Excel
+    if extra_fields:
+        st.markdown(
+            '<div class="extra-title">Información complementaria</div>',
+            unsafe_allow_html=True,
+        )
+
+        extra_cols = st.columns(3)
+
+        for i, (field, values) in enumerate(extra_fields):
             value_html = format_field_values(values, preview_limit=5)
-            with extra_cols[i % 2]:
+
+            with extra_cols[i % 3]:
                 st.markdown(
                     f'<div class="field">'
-                    f'<div class="field-label">{field.title()} <span class="count-badge">({len(values)})</span></div>'
+                    f'<div class="field-label">'
+                    f'{field.title()} '
+                    f'<span class="count-badge">({len(values)})</span>'
+                    f'</div>'
                     f'<div class="field-value">{value_html}</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+
     st.markdown('</div>', unsafe_allow_html=True)
 
 
